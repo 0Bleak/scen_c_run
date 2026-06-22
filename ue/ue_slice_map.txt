@@ -4,3 +4,7 @@ vue3 performance 001010000000008
 vue4 performance 001010000000009
 vue5 business 001010000000010
 vue6 business 001010000000011
+
+iperf3 -s -p 5201 -D; iperf3 -s -p 5211 -D
+iperf3 -s -p 5202 -D; iperf3 -s -p 5212 -D
+iperf3 -s -p 5203 -D; iperf3 -s -p 5213 -D

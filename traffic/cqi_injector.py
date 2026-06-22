@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
+# CQI injector -- 3 UEs / 1 ZMQ DU. Reads the DU metrics on :8003, overwrites
+# cqi with the SNCF trace value, stamps slice_sd / f1ap / e2_node by attach
+# order, and re-serves on :8002 for the xApp and logger. RNTI passed through
+# unchanged (no remap). Launch UEs in slice order:
+#   slot0 -> sd1 CRITICAL, slot1 -> sd2 PERFORMANCE, slot2 -> sd3 BUSINESS.
 import argparse, json, os, glob, random, time, threading, csv
 import websocket
 from websocket_server import WebsocketServer
 
-DU_STREAMS = [
-    {"url": "127.0.0.1:8003", "e2_node": "gnbd_001_001_00000213_1", "slice_order": [1, 2, 3]},
-    {"url": "127.0.0.1:8004", "e2_node": "gnbd_001_001_00000213_2", "slice_order": [1, 2, 3]},
-]
+# Verify e2_node against: docker exec ric_dbaas redis-cli KEYS '*RAN*'
+DU_URL    = "127.0.0.1:8003"
+E2_NODE   = "gnbd_001_001_00000213_1"
+SLICE_ORD = [1, 2, 3]
 
 class SNCFTrace:
     def __init__(self, path):
@@ -38,56 +43,51 @@ def main():
     p.add_argument("--dataset_dir", required=True)
     a = p.parse_args()
     tm = TraceMgr(a.dataset_dir)
-    latest = {s["url"]: {"msg": None, "lock": threading.Lock()} for s in DU_STREAMS}
-    rnti_map = {}; rnti_ctr = [0xF001]; order = {}
+
+    latest = {"msg": None, "lock": threading.Lock()}
+    slot_of = {}                       # raw_rnti -> slot (0,1,2), by attach order
 
     srv = WebsocketServer(host="0.0.0.0", port=a.proxy_port)
-    srv.set_fn_message_received(lambda c, s, m: s.send_message(c, json.dumps({"cmd": "metrics_subscribe"}))
-                                if '"metrics_subscribe"' in m else None)
+    srv.set_fn_message_received(
+        lambda c, s, m: s.send_message(c, json.dumps({"cmd": "metrics_subscribe"}))
+        if '"metrics_subscribe"' in m else None)
     threading.Thread(target=srv.run_forever, daemon=True).start()
 
-    def du_loop(stream):
-        url = stream["url"]; node = stream["e2_node"]; so = stream["slice_order"]
-        order.setdefault(url, {})
+    def du_loop():
         while True:
             try:
-                ws = websocket.create_connection(f"ws://{url}", timeout=30)
+                ws = websocket.create_connection(f"ws://{DU_URL}", timeout=30)
                 ws.send(json.dumps({"cmd": "metrics_subscribe"}))
-                print(f"[INJ] connected {url} -> {node}")
+                print(f"[INJ] connected {DU_URL} -> {E2_NODE}")
                 while True:
                     d = json.loads(ws.recv())
                     if "cells" not in d: continue
                     for cell in d["cells"]:
                         for ue in cell.get("ue_list", []):
-                            o = ue.get("rnti", 0)
-                            if not o: continue
-                            gk = (url, o)
-                            if gk not in rnti_map:
-                                rnti_map[gk] = rnti_ctr[0]; rnti_ctr[0] += 1
-                                fid = len(order[url]); order[url][o] = min(fid, 2)
-                            ue["rnti"] = rnti_map[gk]
-                            ue["f1ap"] = order[url][o]
-                            ue["e2_node"] = node
-                            ue["slice_sd"] = so[order[url][o]]
-                            ue["cqi"] = tm.cqi(rnti_map[gk])
-                    with latest[url]["lock"]: latest[url]["msg"] = d
+                            r = ue.get("rnti", 0)
+                            if not r: continue
+                            if r not in slot_of:
+                                slot_of[r] = min(len(slot_of), 2)
+                            ue["f1ap"]     = slot_of[r]
+                            ue["e2_node"]  = E2_NODE
+                            ue["slice_sd"] = SLICE_ORD[slot_of[r]]
+                            ue["cqi"]      = tm.cqi(r)
+                    with latest["lock"]: latest["msg"] = d
             except Exception as e:
-                print(f"[INJ] {url} err {e}, retry"); time.sleep(2)
+                print(f"[INJ] {DU_URL} err {e}, retry"); time.sleep(2)
 
-    def merge():
+    def push():
         while True:
-            time.sleep(1); ues = []
-            for s in DU_STREAMS:
-                with latest[s["url"]]["lock"]:
-                    m = latest[s["url"]]["msg"]
-                    if m:
-                        for c in m["cells"]: ues += c.get("ue_list", [])
+            time.sleep(1)
+            with latest["lock"]: m = latest["msg"]
+            if not m: continue
+            ues = []
+            for c in m["cells"]: ues += c.get("ue_list", [])
             if ues: srv.send_message_to_all(json.dumps({"cells": [{"ue_list": ues}]}))
 
-    for s in DU_STREAMS:
-        threading.Thread(target=du_loop, args=(s,), daemon=True).start()
-    threading.Thread(target=merge, daemon=True).start()
-    print("[INJ] 2 DUs (8003-8004) -> 8002")
+    threading.Thread(target=du_loop, daemon=True).start()
+    threading.Thread(target=push, daemon=True).start()
+    print("[INJ] 1 DU (8003) -> 8002, raw RNTI, SNCF CQI injection")
     while True: time.sleep(60)
 
 if __name__ == "__main__":

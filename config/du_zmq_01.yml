@@ -28,7 +28,7 @@ cell_cfg:
   prach:
     prach_config_index: 1
   pdsch: { mcs_table: qam64 }
-  pusch: { mcs_table: qam64 }
+  pusch: { mcs_table: qam64, target_sinr: 2.0 }
   slicing:
     - { sst: 1, sd: 1, sched_cfg: { min_prb_policy_ratio: 0, max_prb_policy_ratio: 100 } }
     - { sst: 1, sd: 2, sched_cfg: { min_prb_policy_ratio: 0, max_prb_policy_ratio: 100 } }
