@@ -11,7 +11,7 @@ from websocket_server import WebsocketServer
 # Verify e2_node against: docker exec ric_dbaas redis-cli KEYS '*RAN*'
 DU_URL    = "127.0.0.1:8003"
 E2_NODE   = "gnbd_001_001_00000213_1"
-SLICE_ORD = [1, 2, 3]
+SLICE_ORD = [3, 1, 2]
 
 class SNCFTrace:
     def __init__(self, path):

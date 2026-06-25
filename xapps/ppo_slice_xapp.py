@@ -49,8 +49,8 @@ CRIT_PENALTY = 0.3                            # subtracted when CRITICAL unsatis
 CRIT_MIN_FLOOR = 30                           # mask any profile giving CRITICAL < this when unsatisfied
 
 # PPO hyper-parameters
-ROLLOUT, EPOCHS, GAMMA, LAM = 64, 6, 0.99, 0.95
-CLIP, LR, ENT_COEF, VF_COEF = 0.2, 3e-4, 0.01, 0.5
+ROLLOUT, EPOCHS, GAMMA, LAM = 32, 6, 0.99, 0.95
+CLIP, LR, ENT_COEF, VF_COEF = 0.2, 3e-4, 0.03, 0.5
 CKPT_DEFAULT = "/tmp/ppo_slice.pt"
 TRAIN_LOG    = "/tmp/ppo_train_log.csv"
 
