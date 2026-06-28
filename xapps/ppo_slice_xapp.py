@@ -37,7 +37,7 @@ SLICES  = ["CRITICAL", "PERFORMANCE", "BUSINESS"]
 SD_TO_SLICE = {}                              # filled from stream; fallback by order
 
 # DL SLA targets (bits/s).  From SLA Table 1, DL column.
-SLA_DL = {"CRITICAL": 356_000, "PERFORMANCE": 311_000, "BUSINESS": 20_000_000}
+SLA_DL = {"CRITICAL": 9_000_000, "PERFORMANCE": 8_000_000, "BUSINESS": 25_000_000}
 
 # 6 discrete DL PRB min-ratio profiles, [CRITICAL, PERFORMANCE, BUSINESS], sum=100
 PROFILES = [

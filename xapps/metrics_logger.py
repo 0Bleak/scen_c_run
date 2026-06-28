@@ -11,7 +11,7 @@ PRB_FILE = "/tmp/prb_decisions.json"
 prb = {}
 
 SLICE_NAME    = {1: "CRITICAL", 2: "PERFORMANCE", 3: "BUSINESS"}
-SLA_DL_TARGET = {1: 356_000, 2: 311_000, 3: 20_000_000}
+SLA_DL_TARGET = {1: 9_000_000, 2: 8_000_000, 3: 25_000_000}
 
 def load_prb():
     global prb
