@@ -18,6 +18,11 @@ MDP:
 
 Run (inside python_xapp_runner): python3 ppo_slice_xapp.py --interval 1 --train
 Eval (frozen, for comparison vs baseline/DQN/xSlice): python3 ppo_slice_xapp.py --eval --ckpt ppo.pt
+
+LOGGING FIX (no MDP/reward/policy change):
+  * _snapshot now carries the UE rnti into the per-slice dict.
+  * _apply writes /tmp/prb_decisions.json keyed by str(rnti) so metrics_logger.py
+    (which does prb.get(str(r))) can join the applied PRB action onto each row.
 """
 import argparse, signal, json, threading, time, datetime, os
 import numpy as np
@@ -53,6 +58,7 @@ ROLLOUT, EPOCHS, GAMMA, LAM = 32, 6, 0.99, 0.95
 CLIP, LR, ENT_COEF, VF_COEF = 0.2, 3e-4, 0.03, 0.5
 CKPT_DEFAULT = "/tmp/ppo_slice.pt"
 TRAIN_LOG    = "/tmp/ppo_train_log.csv"
+PRB_FILE     = "/tmp/prb_decisions.json"      # consumed by metrics_logger.py (keyed by str(rnti))
 
 # ------------------------------ networks ------------------------------------
 class ActorCritic(nn.Module):
@@ -173,7 +179,7 @@ class PpoXApp(xAppBase):
                 if "cells" not in d: return
                 for cell in d["cells"]:
                     for ue in cell.get("ue_list", []):
-                        r = ue.get("rnti"); 
+                        r = ue.get("rnti")
                         if not r: continue
                         with self.lock:
                             self.m[r] = {"cqi": ue.get("cqi", 1), "sd": ue.get("slice_sd", 3),
@@ -190,13 +196,15 @@ class PpoXApp(xAppBase):
         return {1: "CRITICAL", 2: "PERFORMANCE", 3: "BUSINESS"}.get(sd, "BUSINESS")
 
     def _snapshot(self):
-        """Return per-slice dict {name: {cqi, dl, f1ap, node}} for active UEs."""
+        """Return per-slice dict {name: {cqi, dl, f1ap, node, rnti}} for active UEs."""
         with self.lock:
             act = {r: dict(v) for r, v in self.m.items() if time.time() - v["ts"] < 10}
         slc = {}
         for r, x in act.items():
             name = self._slice_of(x["sd"])
-            slc[name] = {"cqi": x["cqi"], "dl": x["dl"], "f1ap": x["f1ap"], "node": x["node"]}
+            # carry rnti so _apply can key the PRB-decision log the way metrics_logger expects
+            slc[name] = {"cqi": x["cqi"], "dl": x["dl"], "f1ap": x["f1ap"],
+                         "node": x["node"], "rnti": r}
         return slc
 
     def _state_reward(self, slc):
@@ -223,15 +231,25 @@ class PpoXApp(xAppBase):
 
     def _apply(self, action, slc):
         prof = PROFILES[action]
+        decisions = {}                              # logging only -- keyed by str(rnti)
         for ratio, s in zip(prof, SLICES):
             if s not in slc: continue
             d = slc[s]
             try:
-                self.ppo  # noqa
                 self.e2sm_rc.control_slice_level_prb_quota(
                     d["node"], d["f1ap"], int(ratio), 100, dedicated_prb_ratio=100, ack_request=1)
             except Exception as e:
                 print(f"  [E2] {s} f1ap={d['f1ap']} FAIL: {e}")
+            decisions[str(d["rnti"])] = {
+                "prb_min": int(ratio), "prb_max": 100,
+                "slice_name": s, "f1ap_id": d["f1ap"],
+                "alloc_req_bps": int(SLA_DL[s]),
+            }
+        try:
+            with open(PRB_FILE, "w") as f:
+                json.dump(decisions, f)
+        except Exception as e:
+            print(f"  [PRB-LOG] write failed: {e}")
 
     def _loop(self):
         mode = "TRAIN" if self.ppo.train_mode else "EVAL"

@@ -1,17 +1,49 @@
 #!/usr/bin/env python3
-# CQI injector -- 3 UEs / 1 ZMQ DU. Reads the DU metrics on :8003, overwrites
-# cqi with the SNCF trace value, stamps slice_sd / f1ap / e2_node by attach
-# order, and re-serves on :8002 for the xApp and logger. RNTI passed through
-# unchanged (no remap). Launch UEs in slice order:
-#   slot0 -> sd1 CRITICAL, slot1 -> sd2 PERFORMANCE, slot2 -> sd3 BUSINESS.
-import argparse, json, os, glob, random, time, threading, csv
+# CQI injector -- 3 UEs / 1 ZMQ DU.
+# Reads c-rnti from each srsUE log file to map RNTI->slice.
+# UE log files are configured in ue_0X.conf as filename = /tmp/ue_0X.log
+# Fixed mapping (from MongoDB, never changes):
+#   /tmp/ue_01.log -> ue_01.conf -> IMSI 006 -> sd=1 -> CRITICAL
+#   /tmp/ue_02.log -> ue_02.conf -> IMSI 007 -> sd=2 -> PERFORMANCE
+#   /tmp/ue_03.log -> ue_03.conf -> IMSI 008 -> sd=3 -> BUSINESS
+import argparse, json, os, glob, random, time, threading, csv, re
 import websocket
 from websocket_server import WebsocketServer
 
-# Verify e2_node against: docker exec ric_dbaas redis-cli KEYS '*RAN*'
-DU_URL    = "127.0.0.1:8003"
-E2_NODE   = "gnbd_001_001_00000213_1"
-SLICE_ORD = [3, 1, 2]
+DU_URL  = "127.0.0.1:8003"
+E2_NODE = "gnbd_001_001_00000213_1"
+
+UE_LOG_TO_SD = {
+    "/tmp/ue_01.log": 1,
+    "/tmp/ue_02.log": 2,
+    "/tmp/ue_03.log": 3,
+}
+
+def build_rnti_map():
+    rnti_to_sd   = {}
+    rnti_to_f1ap = {}
+    name_map = {1:"CRITICAL", 2:"PERFORMANCE", 3:"BUSINESS"}
+    while len(rnti_to_sd) < 3:
+        for log_path, sd in UE_LOG_TO_SD.items():
+            if sd in rnti_to_sd.values():
+                continue
+            try:
+                with open(log_path) as f:
+                    content = f.read()
+                m = re.search(r'c-rnti=(0x[0-9a-fA-F]+)', content)
+                if m:
+                    rnti = int(m.group(1), 16)
+                    rnti_to_sd[rnti] = sd
+                    print(f"[INJ] {log_path} -> rnti={rnti}(0x{rnti:04x}) -> {name_map[sd]} (sd={sd})")
+            except FileNotFoundError:
+                pass
+        if len(rnti_to_sd) < 3:
+            print(f"[INJ] Found {len(rnti_to_sd)}/3 RNTIs, waiting for UE logs...")
+            time.sleep(3)
+    for i, r in enumerate(sorted(rnti_to_sd.keys())):
+        rnti_to_f1ap[r] = i
+    print(f"[INJ] Map complete: {rnti_to_sd}")
+    return rnti_to_sd, rnti_to_f1ap
 
 class SNCFTrace:
     def __init__(self, path):
@@ -19,12 +51,12 @@ class SNCFTrace:
         with open(path) as f:
             last = None
             for row in csv.DictReader(f):
-                ts = row.get("Timestamp", ""); c = int(row.get("CQI_wb", 15))
+                ts = row.get("Timestamp",""); c = int(row.get("CQI_wb",15))
                 if last is None or ts[:19] != last[:19]:
                     self.v.append(c); last = ts
         if not self.v: self.v = [15]
     def next(self):
-        x = self.v[self.i]; self.i = (self.i + 1) % len(self.v); return x
+        x = self.v[self.i]; self.i = (self.i+1) % len(self.v); return x
 
 class TraceMgr:
     def __init__(self, d):
@@ -42,14 +74,13 @@ def main():
     p.add_argument("--proxy_port", type=int, default=8002)
     p.add_argument("--dataset_dir", required=True)
     a = p.parse_args()
+    print("[INJ] Reading c-rnti from UE log files...")
+    rnti_to_sd, rnti_to_f1ap = build_rnti_map()
     tm = TraceMgr(a.dataset_dir)
-
     latest = {"msg": None, "lock": threading.Lock()}
-    slot_of = {}                       # raw_rnti -> slot (0,1,2), by attach order
-
     srv = WebsocketServer(host="0.0.0.0", port=a.proxy_port)
     srv.set_fn_message_received(
-        lambda c, s, m: s.send_message(c, json.dumps({"cmd": "metrics_subscribe"}))
+        lambda c, s, m: s.send_message(c, json.dumps({"cmd":"metrics_subscribe"}))
         if '"metrics_subscribe"' in m else None)
     threading.Thread(target=srv.run_forever, daemon=True).start()
 
@@ -57,7 +88,7 @@ def main():
         while True:
             try:
                 ws = websocket.create_connection(f"ws://{DU_URL}", timeout=30)
-                ws.send(json.dumps({"cmd": "metrics_subscribe"}))
+                ws.send(json.dumps({"cmd":"metrics_subscribe"}))
                 print(f"[INJ] connected {DU_URL} -> {E2_NODE}")
                 while True:
                     d = json.loads(ws.recv())
@@ -66,11 +97,9 @@ def main():
                         for ue in cell.get("ue_list", []):
                             r = ue.get("rnti", 0)
                             if not r: continue
-                            if r not in slot_of:
-                                slot_of[r] = min(len(slot_of), 2)
-                            ue["f1ap"]     = slot_of[r]
+                            ue["f1ap"]     = rnti_to_f1ap.get(r, 0)
                             ue["e2_node"]  = E2_NODE
-                            ue["slice_sd"] = SLICE_ORD[slot_of[r]]
+                            ue["slice_sd"] = rnti_to_sd.get(r, 3)
                             ue["cqi"]      = tm.cqi(r)
                     with latest["lock"]: latest["msg"] = d
             except Exception as e:
@@ -83,11 +112,11 @@ def main():
             if not m: continue
             ues = []
             for c in m["cells"]: ues += c.get("ue_list", [])
-            if ues: srv.send_message_to_all(json.dumps({"cells": [{"ue_list": ues}]}))
+            if ues: srv.send_message_to_all(json.dumps({"cells":[{"ue_list":ues}]}))
 
     threading.Thread(target=du_loop, daemon=True).start()
     threading.Thread(target=push, daemon=True).start()
-    print("[INJ] 1 DU (8003) -> 8002, raw RNTI, SNCF CQI injection")
+    print("[INJ] 1 DU (8003) -> 8002 | SNCF CQI | rnti->sd from UE logs")
     while True: time.sleep(60)
 
 if __name__ == "__main__":

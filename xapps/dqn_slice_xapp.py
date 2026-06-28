@@ -13,6 +13,12 @@ DQN specifics:
   - Epsilon-greedy exploration: eps decays 1.0 -> 0.05 over EPS_DECAY steps
   - Huber loss for stability
   - Same state/action/reward as PPO -> direct comparison valid
+
+LOGGING FIX (no MDP/reward/policy change):
+  * Previous version wrote /tmp/prb_decisions.json keyed by str(f1ap) (0/1/2),
+    but metrics_logger.py looks the action up by str(rnti) -> the join always
+    missed, leaving prb_min/prb_max blank in the dataset. Now keyed by str(rnti).
+  * _snapshot carries the UE rnti into the per-slice dict so _apply can key it.
 """
 import argparse, signal, json, threading, time, datetime, os, random
 from collections import deque
@@ -54,6 +60,7 @@ EPS_DECAY    = 500      # steps to decay epsilon over
 TRAIN_START  = 128      # minimum buffer size before training starts
 CKPT_DEFAULT = "/tmp/dqn_slice.pt"
 TRAIN_LOG    = "/tmp/dqn_train_log.csv"
+PRB_FILE     = "/tmp/prb_decisions.json"      # consumed by metrics_logger.py (keyed by str(rnti))
 
 # ------------------------------ network -------------------------------------
 class QNetwork(nn.Module):
@@ -220,8 +227,9 @@ class DqnXApp(xAppBase):
         slc = {}
         for r, x in act.items():
             name = self._slice_of(x["sd"])
+            # carry rnti so _apply can key the PRB-decision log the way metrics_logger expects
             slc[name] = {"cqi": x["cqi"], "dl": x["dl"],
-                         "f1ap": x["f1ap"], "node": x["node"]}
+                         "f1ap": x["f1ap"], "node": x["node"], "rnti": r}
         return slc
 
     def _state_reward(self, slc):
@@ -248,7 +256,7 @@ class DqnXApp(xAppBase):
 
     def _apply(self, action, slc):
         prof = PROFILES[action]
-        prb_out = {}
+        prb_out = {}                                # logging only -- keyed by str(rnti)
         for ratio, s in zip(prof, SLICES):
             if s not in slc: continue
             d = slc[s]
@@ -258,21 +266,22 @@ class DqnXApp(xAppBase):
                     dedicated_prb_ratio=100, ack_request=1)
             except Exception as e:
                 print(f"  [E2] {s} f1ap={d['f1ap']} FAIL: {e}")
-            prb_out[str(d["f1ap"])] = {
-                "prb_min": ratio, "prb_max": 100,
+            prb_out[str(d["rnti"])] = {
+                "prb_min": int(ratio), "prb_max": 100,
                 "slice_name": s, "f1ap_id": d["f1ap"],
-                "alloc_req_bps": SLA_DL[s],
+                "alloc_req_bps": int(SLA_DL[s]),
             }
         try:
-            import json as _j
-            _j.dump(prb_out, open("/tmp/prb_decisions.json", "w"))
-        except: pass
+            with open(PRB_FILE, "w") as f:
+                json.dump(prb_out, f)
+        except Exception as e:
+            print(f"  [PRB-LOG] write failed: {e}")
 
     def _loop(self):
         mode = "TRAIN" if self.dqn.train_mode else "EVAL"
         print(f"[DQN-CTRL] {mode} | interval={self.interval}s | "
               f"buffer={BUFFER_CAP} | batch={BATCH_SIZE}")
-        print(f"[DQN-CTRL] eps: {EPS_START}→{EPS_END} over {EPS_DECAY} steps")
+        print(f"[DQN-CTRL] eps: {EPS_START} -> {EPS_END} over {EPS_DECAY} steps")
         while self.running:
             time.sleep(self.interval)
             slc = self._snapshot()
