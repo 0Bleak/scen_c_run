@@ -1,0 +1,61 @@
+Subscriber IMSIs and slice (sd) assignments — verify these match ue configs:
+{
+  _id: ObjectId('6a2ffade03065a95929df8a3'),
+  imsi: '001010000000006',
+  slice: [
+    {
+      sst: 1,
+      sd: '000001'
+    }
+  ]
+}
+{
+  _id: ObjectId('6a2ffade03065a95929df8a4'),
+  imsi: '001010000000007',
+  slice: [
+    {
+      sst: 1,
+      sd: '000002'
+    }
+  ]
+}
+{
+  _id: ObjectId('6a2ffade03065a95929df8a5'),
+  imsi: '001010000000008',
+  slice: [
+    {
+      sst: 1,
+      sd: '000003'
+    }
+  ]
+}
+{
+  _id: ObjectId('6a2ffade03065a95929df8a6'),
+  imsi: '001010000000009',
+  slice: [
+    {
+      sst: 1,
+      sd: '000002'
+    }
+  ]
+}
+{
+  _id: ObjectId('6a2ffade03065a95929df8a7'),
+  imsi: '001010000000010',
+  slice: [
+    {
+      sst: 1,
+      sd: '000003'
+    }
+  ]
+}
+{
+  _id: ObjectId('6a2ffade03065a95929df8a8'),
+  imsi: '001010000000011',
+  slice: [
+    {
+      sst: 1,
+      sd: '000003'
+    }
+  ]
+}
