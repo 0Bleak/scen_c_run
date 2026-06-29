@@ -88,8 +88,6 @@ class CqiXApp(xAppBase):
     @xAppBase.start_function
     def start(self):
         threading.Thread(target=self._loop, daemon=True).start()
-
-
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--config", default="")
