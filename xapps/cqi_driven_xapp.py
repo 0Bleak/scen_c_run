@@ -95,7 +95,7 @@ if __name__ == "__main__":
     p.add_argument("--config", default="")
     p.add_argument("--http_server_port", type=int, default=8094)
     p.add_argument("--rmr_port", type=int, default=4564)
-    p.add_argument("--interval", type=int, default=5, help="decision cadence (s), match your RL agents")
+    p.add_argument("--interval", type=int, default=1, help="decision cadence (s), match your RL agents")
     a = p.parse_args()
     x = CqiXApp(a.config, a.http_server_port, a.rmr_port, a.interval)
     x.e2sm_rc.set_ran_func_id(3)
