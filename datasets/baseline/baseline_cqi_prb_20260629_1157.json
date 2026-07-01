@@ -1,1 +1,0 @@
-{"17921": {"prb_min": 30, "prb_max": 100, "slice_name": "CRITICAL", "f1ap_id": 0, "alloc_req_bps": ""}, "17922": {"prb_min": 35, "prb_max": 100, "slice_name": "BUSINESS", "f1ap_id": 1, "alloc_req_bps": ""}, "17923": {"prb_min": 35, "prb_max": 100, "slice_name": "PERFORMANCE", "f1ap_id": 2, "alloc_req_bps": ""}}
